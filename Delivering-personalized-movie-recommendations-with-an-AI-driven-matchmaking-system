@@ -1,0 +1,89 @@
+# movie_recommender.py
+
+import streamlit as st
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from surprise import SVD, Dataset, Reader
+from surprise.model_selection import train_test_split
+from surprise.accuracy import rmse
+
+# -----------------------------
+# DATA LOADING AND PREPROCESSING
+# -----------------------------
+
+@st.cache_data
+def load_data():
+    movies = pd.read_csv('data/movies.csv')
+    ratings = pd.read_csv('data/ratings.csv')
+    return movies, ratings
+
+def preprocess_movies(movies):
+    movies['genres'] = movies['genres'].str.replace('|', ' ')
+    return movies
+
+def create_tfidf_matrix(movies):
+    tfidf = TfidfVectorizer(stop_words='english')
+    tfidf_matrix = tfidf.fit_transform(movies['genres'])
+    return tfidf_matrix
+
+# -----------------------------
+# CONTENT-BASED RECOMMENDATION
+# -----------------------------
+
+def content_based_recommendations(movie_title, movies, tfidf_matrix, top_n=10):
+    indices = pd.Series(movies.index, index=movies['title']).drop_duplicates()
+    idx = indices.get(movie_title)
+
+    if idx is None:
+        return ["Movie not found in database."]
+    
+    cosine_sim = cosine_similarity(tfidf_matrix[idx], tfidf_matrix).flatten()
+    similar_indices = cosine_sim.argsort()[-top_n-1:-1][::-1]
+    return movies['title'].iloc[similar_indices].tolist()
+
+# -----------------------------
+# COLLABORATIVE FILTERING (SVD)
+# -----------------------------
+
+@st.cache_resource
+def train_svd_model(ratings):
+    reader = Reader(rating_scale=(0.5, 5.0))
+    data = Dataset.load_from_df(ratings[['userId', 'movieId', 'rating']], reader)
+    trainset, testset = train_test_split(data, test_size=0.2)
+
+    model = SVD()
+    model.fit(trainset)
+    predictions = model.test(testset)
+
+    st.text("Training SVD Model...")
+    st.text(f"RMSE: {rmse(predictions)}")
+    return model
+
+# -----------------------------
+# STREAMLIT UI
+# -----------------------------
+
+def main():
+    st.title("🎬 AI-Driven Movie Recommender System")
+
+    # Load and preprocess
+    movies, ratings = load_data()
+    movies = preprocess_movies(movies)
+    tfidf_matrix = create_tfidf_matrix(movies)
+    svd_model = train_svd_model(ratings)
+
+    st.subheader("Enter a movie you like to get similar recommendations:")
+    movie_input = st.text_input("Movie Title:")
+
+    if st.button("Recommend"):
+        if movie_input.strip() == "":
+            st.warning("Please enter a valid movie title.")
+        else:
+            recs = content_based_recommendations(movie_input, movies, tfidf_matrix)
+            st.markdown("### 🎯 Recommended Movies:")
+            for rec in recs:
+                st.write(f"- {rec}")
+
+if __name__ == "__main__":
+    main()
